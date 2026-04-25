@@ -1,0 +1,8 @@
+[
+    uuid(E7CB3F4D-2E5A-4B8F-9C1D-AF6823501DE9),
+    version(1.0)
+]
+interface TrayAppRpc
+{
+    void RpcStopService(void);
+}
