@@ -4,5 +4,40 @@
 ]
 interface TrayAppRpc
 {
+    /* control */
     void RpcStopService(void);
+
+    /* result codes:
+       0  = OK
+       1  = not authenticated
+       2  = no license
+       3  = network / backend error
+       4  = bad credentials / activation code
+    */
+
+    /* auth */
+    long RpcLogin(
+        [in, string] const wchar_t* username,
+        [in, string] const wchar_t* password,
+        [out, string] wchar_t**     errorMessage
+    );
+
+    long RpcLogout(void);
+
+    long RpcGetCurrentUser(
+        [out] long*                 isAuthenticated,
+        [out, string] wchar_t**     username
+    );
+
+    /* license */
+    long RpcGetLicenseStatus(
+        [out] long*                 hasLicense,
+        [out, string] wchar_t**     expirationDate,
+        [out, string] wchar_t**     errorMessage
+    );
+
+    long RpcActivate(
+        [in, string] const wchar_t* code,
+        [out, string] wchar_t**     errorMessage
+    );
 }
