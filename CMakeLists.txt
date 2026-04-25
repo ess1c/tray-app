@@ -52,8 +52,12 @@ add_dependencies(TrayApp rpc_stubs)
 # ── TrayService (Windows service) ─────────────────────────────────
 add_executable(TrayService
     service/service_main.cpp
+    service/http_client.cpp
+    service/http_client.h
+    service/json_lite.h
+    service/backend_config.h
     ${RPC_GEN}/trayapp_s.c
 )
-target_include_directories(TrayService PRIVATE ${RPC_GEN})
-target_link_libraries(TrayService PRIVATE rpcrt4 wtsapi32 userenv)
+target_include_directories(TrayService PRIVATE ${RPC_GEN} ${CMAKE_CURRENT_SOURCE_DIR}/service)
+target_link_libraries(TrayService PRIVATE rpcrt4 wtsapi32 userenv winhttp)
 add_dependencies(TrayService rpc_stubs)
