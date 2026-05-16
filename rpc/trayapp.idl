@@ -40,4 +40,30 @@ interface TrayAppRpc
         [in, string] const wchar_t* code,
         [out, string] wchar_t**     errorMessage
     );
+
+    /* antivirus */
+    long RpcGetAntivirusInfo(
+        [out] long*                 loaded,
+        [out] long*                 recordCount,
+        [out, string] wchar_t**     releaseDate
+    );
+
+    /* Возвращает многострочный результат:
+       формат "infected|<threatName>|<offset>" или "clean" или "error|<msg>" */
+    long RpcScanFile(
+        [in, string] const wchar_t* filePath,
+        [out, string] wchar_t**     result
+    );
+
+    /* Многострочный результат, каждая строка — один заражённый файл:
+       "<path>|<threatName>|<offset>" */
+    long RpcScanDirectory(
+        [in, string] const wchar_t* dirPath,
+        [out, string] wchar_t**     results
+    );
+
+    /* Доп: сканирование всех несъёмных дисков */
+    long RpcScanAllDrives(
+        [out, string] wchar_t**     results
+    );
 }

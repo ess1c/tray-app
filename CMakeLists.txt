@@ -58,8 +58,10 @@ add_executable(TrayService
     service/json_lite.h
     service/backend_config.h
     service/process_protect.h
+    service/antivirus_engine.cpp
+    service/antivirus_engine.h
     ${RPC_GEN}/trayapp_s.c
 )
 target_include_directories(TrayService PRIVATE ${RPC_GEN} ${CMAKE_CURRENT_SOURCE_DIR}/service)
-target_link_libraries(TrayService PRIVATE rpcrt4 wtsapi32 userenv winhttp)
+target_link_libraries(TrayService PRIVATE rpcrt4 wtsapi32 userenv winhttp bcrypt)
 add_dependencies(TrayService rpc_stubs)

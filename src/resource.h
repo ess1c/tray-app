@@ -25,3 +25,9 @@
 #define IDC_STATUS_USER   3001
 #define IDC_STATUS_LIC    3002
 #define IDC_STATUS_AV     3003
+#define IDC_STATUS_AVDB   3004
+
+/* Antivirus menu items */
+#define ID_AV_SCAN_FILE   40010
+#define ID_AV_SCAN_DIR    40011
+#define ID_AV_SCAN_ALL    40012

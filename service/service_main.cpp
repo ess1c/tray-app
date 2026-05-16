@@ -12,6 +12,9 @@
 #include "json_lite.h"
 #include "backend_config.h"
 #include "process_protect.h"
+#include "antivirus_engine.h"
+
+#include <sstream>
 
 #pragma comment(lib, "rpcrt4.lib")
 #pragma comment(lib, "wtsapi32.lib")
@@ -55,6 +58,9 @@ static HANDLE         g_hStopEvent     = nullptr;     // signals background thre
 static std::thread    g_tokenThread;
 static std::thread    g_licenseThread;
 static std::atomic<bool> g_threadsRunning{false};
+
+/* Антивирусный движок — загружается после успешной активации */
+static AntivirusEngine g_avEngine;
 
 /* ================================================================ */
 /*  Forward declarations                                             */
@@ -214,6 +220,12 @@ static bool ApplyTicketResponse(const std::string& body)
     g_state.licenseTicket    = body;          // храним весь ответ как тикет
     g_state.expirationDate   = exp;
     g_state.licenseRefreshAt = Now() + ttl;   // период из самого тикета
+
+    /* Требование 1 практики 5: после успешной активации/проверки лицензии
+       загружаем антивирусные базы (если ещё не загружены). */
+    if (!g_avEngine.IsLoaded()) {
+        g_avEngine.LoadBuiltinSignatures();
+    }
     return true;
 }
 
@@ -274,11 +286,15 @@ static bool DoActivate(const std::string& key, std::string& outError)
 }
 
 /* Logout: на бэке отдельного эндпоинта нет —
-   просто очищаем токены и тикет в памяти (требование 3 и 7). */
+   просто очищаем токены и тикет в памяти (требование 3 и 7).
+   А также выгружаем антивирусные базы (требование 11 практики 5). */
 static void DoLogout()
 {
-    std::lock_guard<std::mutex> lk(g_stateMu);
-    g_state = State{};
+    {
+        std::lock_guard<std::mutex> lk(g_stateMu);
+        g_state = State{};
+    }
+    g_avEngine.Clear();
 }
 
 /* ================================================================ */
@@ -432,6 +448,97 @@ long RpcActivate(const wchar_t* code, wchar_t** errorMessage)
         *errorMessage = MidlCopy(Utf8ToWide(err));
         return 4;
     }
+    /* Сразу после активации — загружаем базы (требование 1 практики 5) */
+    if (!g_avEngine.IsLoaded()) {
+        g_avEngine.LoadBuiltinSignatures();
+    }
+    return 0;
+}
+
+/* ================================================================ */
+/*  Antivirus RPC methods                                            */
+/* ================================================================ */
+
+/* Проверка лицензии перед антивирусным запросом (требование 11). */
+static bool LicenseGate(wchar_t** errorMessage)
+{
+    std::lock_guard<std::mutex> lk(g_stateMu);
+    if (g_state.accessToken.empty()) {
+        if (errorMessage) *errorMessage = MidlCopy(L"not authenticated");
+        return false;
+    }
+    if (!g_state.hasLicense) {
+        if (errorMessage) *errorMessage = MidlCopy(L"no license");
+        return false;
+    }
+    return true;
+}
+
+long RpcGetAntivirusInfo(long* loaded, long* recordCount, wchar_t** releaseDate)
+{
+    *loaded = 0; *recordCount = 0; *releaseDate = nullptr;
+    if (!g_avEngine.IsLoaded()) {
+        *releaseDate = MidlCopy(L"");
+        return 0;
+    }
+    *loaded      = 1;
+    *recordCount = (long)g_avEngine.GetRecordCount();
+    *releaseDate = MidlCopy(Utf8ToWide(g_avEngine.GetReleaseDate()));
+    return 0;
+}
+
+long RpcScanFile(const wchar_t* filePath, wchar_t** result)
+{
+    *result = nullptr;
+    if (!LicenseGate(result)) return 2;
+
+    ScanResult r = g_avEngine.ScanFile(filePath ? filePath : L"");
+    std::wstringstream ss;
+    if (r.error) {
+        ss << L"error|" << Utf8ToWide(r.errorMessage);
+    } else if (r.infected) {
+        ss << L"infected|" << Utf8ToWide(r.threatName) << L"|" << r.offset;
+    } else {
+        ss << L"clean";
+    }
+    *result = MidlCopy(ss.str());
+    return 0;
+}
+
+static std::wstring FormatScanResults(const std::vector<ScanResult>& list)
+{
+    std::wstringstream ss;
+    if (list.empty()) {
+        ss << L"clean";
+    } else {
+        for (const auto& r : list) {
+            if (r.infected) {
+                ss << r.filePath << L"|" << Utf8ToWide(r.threatName)
+                   << L"|" << r.offset << L"\n";
+            }
+        }
+        if (ss.str().empty()) ss << L"clean";
+    }
+    return ss.str();
+}
+
+long RpcScanDirectory(const wchar_t* dirPath, wchar_t** results)
+{
+    *results = nullptr;
+    if (!LicenseGate(results)) return 2;
+
+    auto list = g_avEngine.ScanDirectory(dirPath ? dirPath : L"");
+    *results = MidlCopy(FormatScanResults(list));
+    return 0;
+}
+
+long RpcScanAllDrives(wchar_t** results)
+{
+    *results = nullptr;
+    if (!LicenseGate(results)) return 2;
+
+    auto list = g_avEngine.ScanAllFixedDrives();
+    *results = MidlCopy(FormatScanResults(list));
     return 0;
 }
 

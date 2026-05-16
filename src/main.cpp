@@ -1,5 +1,7 @@
 #include <windows.h>
 #include <shellapi.h>
+#include <shlobj.h>
+#include <commdlg.h>
 #include <tlhelp32.h>
 #include <commctrl.h>
 #include <wincred.h>
@@ -13,6 +15,8 @@
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "credui.lib")
 #pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "comdlg32.lib")
+#pragma comment(lib, "shell32.lib")
 
 /* ================================================================ */
 /*  Globals                                                          */
@@ -47,7 +51,7 @@ static HWND hLblActPrompt = nullptr, hEditActCode = nullptr;
 static HWND hBtnActivate = nullptr, hLblActErr = nullptr;
 
 /* Status view controls */
-static HWND hLblWelcome = nullptr, hLblLicense = nullptr, hLblAvStatus = nullptr;
+static HWND hLblWelcome = nullptr, hLblLicense = nullptr, hLblAvStatus = nullptr, hLblAvDb = nullptr;
 
 /* RPC */
 handle_t hTrayAppBinding = nullptr;
@@ -243,6 +247,54 @@ static long CallRpcActivate(const std::wstring& code, std::wstring& outErr)
     return rc;
 }
 
+/* ── Антивирусные RPC-вызовы ───────────────────────────────────── */
+
+static long CallRpcGetAvInfo(bool& outLoaded, long& outCount, std::wstring& outDate)
+{
+    outLoaded = false; outCount = 0; outDate.clear();
+    if (!BindRpc()) return 3;
+    long rc = 3, loaded = 0, count = 0; wchar_t* date = nullptr;
+    RpcTryExcept { rc = ::RpcGetAntivirusInfo(&loaded, &count, &date); }
+    RpcExcept(1) { rc = 3; UnbindRpc(); } RpcEndExcept;
+    outLoaded = (loaded != 0);
+    outCount  = count;
+    if (date) { outDate = date; midl_user_free(date); }
+    return rc;
+}
+
+static long CallRpcScanFile(const std::wstring& path, std::wstring& outResult)
+{
+    outResult.clear();
+    if (!BindRpc()) return 3;
+    long rc = 3; wchar_t* res = nullptr;
+    RpcTryExcept { rc = ::RpcScanFile(path.c_str(), &res); }
+    RpcExcept(1) { rc = 3; UnbindRpc(); } RpcEndExcept;
+    if (res) { outResult = res; midl_user_free(res); }
+    return rc;
+}
+
+static long CallRpcScanDirectory(const std::wstring& path, std::wstring& outResult)
+{
+    outResult.clear();
+    if (!BindRpc()) return 3;
+    long rc = 3; wchar_t* res = nullptr;
+    RpcTryExcept { rc = ::RpcScanDirectory(path.c_str(), &res); }
+    RpcExcept(1) { rc = 3; UnbindRpc(); } RpcEndExcept;
+    if (res) { outResult = res; midl_user_free(res); }
+    return rc;
+}
+
+static long CallRpcScanAllDrives(std::wstring& outResult)
+{
+    outResult.clear();
+    if (!BindRpc()) return 3;
+    long rc = 3; wchar_t* res = nullptr;
+    RpcTryExcept { rc = ::RpcScanAllDrives(&res); }
+    RpcExcept(1) { rc = 3; UnbindRpc(); } RpcEndExcept;
+    if (res) { outResult = res; midl_user_free(res); }
+    return rc;
+}
+
 /* ================================================================ */
 /*  Tray + menu                                                      */
 /* ================================================================ */
@@ -291,6 +343,7 @@ static void ShowTrayContextMenu(HWND hWnd)
 static HMENU CreateMainMenu()
 {
     HMENU bar = CreateMenu();
+
     HMENU file = CreatePopupMenu();
     AppendMenuW(file, MF_STRING, ID_FILE_LOGOUT,
                 L"\x0412\x044B\x0439\x0442\x0438 \x0438\x0437 \x0430\x043A\x043A\x0430\x0443\x043D\x0442\x0430"); // Выйти из аккаунта
@@ -299,6 +352,19 @@ static HMENU CreateMainMenu()
                 L"\x0412\x044B\x0445\x043E\x0434");                       // Выход
     AppendMenuW(bar, MF_POPUP, (UINT_PTR)file,
                 L"\x0424\x0430\x0439\x043B");                              // Файл
+
+    /* Меню "Антивирус" */
+    HMENU av = CreatePopupMenu();
+    AppendMenuW(av, MF_STRING, ID_AV_SCAN_FILE,
+                L"\x0421\x043A\x0430\x043D\x0438\x0440\x043E\x0432\x0430\x0442\x044C \x0444\x0430\x0439\x043B..."); // Сканировать файл...
+    AppendMenuW(av, MF_STRING, ID_AV_SCAN_DIR,
+                L"\x0421\x043A\x0430\x043D\x0438\x0440\x043E\x0432\x0430\x0442\x044C \x043F\x0430\x043F\x043A\x0443..."); // Сканировать папку...
+    AppendMenuW(av, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(av, MF_STRING, ID_AV_SCAN_ALL,
+                L"\x0421\x043A\x0430\x043D\x0438\x0440\x043E\x0432\x0430\x0442\x044C \x0432\x0441\x0435 \x0434\x0438\x0441\x043A\x0438"); // Сканировать все диски
+    AppendMenuW(bar, MF_POPUP, (UINT_PTR)av,
+                L"\x0410\x043D\x0442\x0438\x0432\x0438\x0440\x0443\x0441");  // Антивирус
+
     return bar;
 }
 
@@ -322,7 +388,8 @@ static void ShowActControls(int show)
 static void ShowStatusControls(int show)
 {
     int s = show ? SW_SHOW : SW_HIDE;
-    ShowWindow(hLblWelcome,  s); ShowWindow(hLblLicense,  s); ShowWindow(hLblAvStatus, s);
+    ShowWindow(hLblWelcome,  s); ShowWindow(hLblLicense,  s);
+    ShowWindow(hLblAvStatus, s); ShowWindow(hLblAvDb, s);
 }
 
 static void SetView(View v)
@@ -342,11 +409,26 @@ static void SetView(View v)
             SetWindowTextW(hLblLicense,  l.c_str());
             SetWindowTextW(hLblAvStatus,
                 L"\x0410\x043D\x0442\x0438\x0432\x0438\x0440\x0443\x0441: \x0410\x043A\x0442\x0438\x0432\x0435\x043D"); // Антивирус: Активен
+
+            /* Информация об антивирусных базах (требование 1 GUI практики 5) */
+            bool loaded = false; long count = 0; std::wstring date;
+            CallRpcGetAvInfo(loaded, count, date);
+            std::wstring dbInfo;
+            if (loaded) {
+                dbInfo = L"\x0411\x0430\x0437\x044B: " + date +                 // Базы:
+                         L"  |  " +
+                         L"\x0437\x0430\x043F\x0438\x0441\x0435\x0439: " +      // записей:
+                         std::to_wstring(count);
+            } else {
+                dbInfo = L"\x0411\x0430\x0437\x044B \x043D\x0435 \x0437\x0430\x0433\x0440\x0443\x0436\x0435\x043D\x044B"; // Базы не загружены
+            }
+            SetWindowTextW(hLblAvDb, dbInfo.c_str());
         } else {
             SetWindowTextW(hLblLicense,
                 L"\x041B\x0438\x0446\x0435\x043D\x0437\x0438\x044F \x043E\x0442\x0441\x0443\x0442\x0441\x0442\x0432\x0443\x0435\x0442"); // Лицензия отсутствует
             SetWindowTextW(hLblAvStatus,
                 L"\x0410\x043D\x0442\x0438\x0432\x0438\x0440\x0443\x0441: \x0417\x0430\x0431\x043B\x043E\x043A\x0438\x0440\x043E\x0432\x0430\x043D"); // Антивирус: Заблокирован
+            SetWindowTextW(hLblAvDb, L"");
         }
     }
 }
@@ -417,12 +499,13 @@ static void CreateAllControls(HWND hWnd)
     hLblWelcome  = MkLabel(hWnd, L"", 40,  40, 540, 24, IDC_STATUS_USER);
     hLblLicense  = MkLabel(hWnd, L"", 40,  80, 540, 24, IDC_STATUS_LIC);
     hLblAvStatus = MkLabel(hWnd, L"", 40, 120, 540, 24, IDC_STATUS_AV);
+    hLblAvDb     = MkLabel(hWnd, L"", 40, 160, 540, 24, IDC_STATUS_AVDB);
 
     /* Apply font to all */
     HWND all[] = {
         hLblUser, hEditUser, hLblPass, hEditPass, hBtnLogin, hLblLoginErr,
         hLblActPrompt, hEditActCode, hBtnActivate, hLblActErr,
-        hLblWelcome, hLblLicense, hLblAvStatus
+        hLblWelcome, hLblLicense, hLblAvStatus, hLblAvDb
     };
     for (HWND h : all) SendMessageW(h, WM_SETFONT, (WPARAM)hFont, TRUE);
 }
@@ -489,6 +572,114 @@ static void OnLogout(HWND hWnd)
     ShowMainWindow(hWnd);
 }
 
+/* ── Антивирусные действия ─────────────────────────────────────── */
+
+static bool ChooseFileDialog(HWND owner, std::wstring& outPath)
+{
+    wchar_t buf[MAX_PATH] = {};
+    OPENFILENAMEW ofn = { sizeof(ofn) };
+    ofn.hwndOwner   = owner;
+    ofn.lpstrFile   = buf;
+    ofn.nMaxFile    = MAX_PATH;
+    ofn.lpstrFilter = L"All files\0*.*\0";
+    ofn.Flags       = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+    if (!GetOpenFileNameW(&ofn)) return false;
+    outPath = buf;
+    return true;
+}
+
+static bool ChooseFolderDialog(HWND owner, std::wstring& outPath)
+{
+    BROWSEINFOW bi = {};
+    bi.hwndOwner = owner;
+    bi.lpszTitle = L"\x0412\x044B\x0431\x0435\x0440\x0438\x0442\x0435 \x043F\x0430\x043F\x043A\x0443"; // Выберите папку
+    bi.ulFlags   = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
+    LPITEMIDLIST pidl = SHBrowseForFolderW(&bi);
+    if (!pidl) return false;
+    wchar_t path[MAX_PATH] = {};
+    BOOL ok = SHGetPathFromIDListW(pidl, path);
+    CoTaskMemFree(pidl);
+    if (!ok) return false;
+    outPath = path;
+    return true;
+}
+
+static void OnScanFile(HWND hWnd)
+{
+    std::wstring path;
+    if (!ChooseFileDialog(hWnd, path)) return;
+
+    std::wstring res;
+    long rc = CallRpcScanFile(path, res);
+    if (rc != 0) {
+        MessageBoxW(hWnd, res.empty() ? L"\x041E\x0448\x0438\x0431\x043A\x0430" : res.c_str(),
+                    L"\x0421\x043A\x0430\x043D\x0438\x0440\x043E\x0432\x0430\x043D\x0438\x0435", MB_OK | MB_ICONWARNING);
+        return;
+    }
+
+    std::wstring msg;
+    if (res.rfind(L"infected|", 0) == 0) {
+        msg = L"\x041E\x0431\x043D\x0430\x0440\x0443\x0436\x0435\x043D\x0430 \x0443\x0433\x0440\x043E\x0437\x0430!\n\n"; // Обнаружена угроза!
+        msg += L"\x0424\x0430\x0439\x043B: " + path + L"\n";   // Файл:
+        msg += L"\x0414\x0435\x0442\x0430\x043B\x0438: " + res.substr(9);   // Детали:
+        MessageBoxW(hWnd, msg.c_str(), L"\x0410\x043D\x0442\x0438\x0432\x0438\x0440\x0443\x0441", MB_OK | MB_ICONERROR);
+    } else if (res == L"clean") {
+        msg = L"\x0424\x0430\x0439\x043B \x0447\x0438\x0441\x0442: " + path; // Файл чист:
+        MessageBoxW(hWnd, msg.c_str(), L"\x0410\x043D\x0442\x0438\x0432\x0438\x0440\x0443\x0441", MB_OK | MB_ICONINFORMATION);
+    } else {
+        MessageBoxW(hWnd, res.c_str(), L"\x0410\x043D\x0442\x0438\x0432\x0438\x0440\x0443\x0441", MB_OK | MB_ICONWARNING);
+    }
+}
+
+static void OnScanDirectory(HWND hWnd)
+{
+    std::wstring path;
+    if (!ChooseFolderDialog(hWnd, path)) return;
+
+    std::wstring res;
+    long rc = CallRpcScanDirectory(path, res);
+    if (rc != 0) {
+        MessageBoxW(hWnd, res.empty() ? L"\x041E\x0448\x0438\x0431\x043A\x0430" : res.c_str(),
+                    L"\x0421\x043A\x0430\x043D\x0438\x0440\x043E\x0432\x0430\x043D\x0438\x0435", MB_OK | MB_ICONWARNING);
+        return;
+    }
+
+    if (res == L"clean") {
+        MessageBoxW(hWnd,
+            L"\x0423\x0433\x0440\x043E\x0437 \x043D\x0435 \x043E\x0431\x043D\x0430\x0440\x0443\x0436\x0435\x043D\x043E", // Угроз не обнаружено
+            L"\x0410\x043D\x0442\x0438\x0432\x0438\x0440\x0443\x0441", MB_OK | MB_ICONINFORMATION);
+    } else {
+        std::wstring msg = L"\x041E\x0431\x043D\x0430\x0440\x0443\x0436\x0435\x043D\x044B \x0443\x0433\x0440\x043E\x0437\x044B:\n\n"; // Обнаружены угрозы:
+        msg += res;
+        MessageBoxW(hWnd, msg.c_str(), L"\x0410\x043D\x0442\x0438\x0432\x0438\x0440\x0443\x0441", MB_OK | MB_ICONERROR);
+    }
+}
+
+static void OnScanAllDrives(HWND hWnd)
+{
+    int r = MessageBoxW(hWnd,
+        L"\x041D\x0430\x0447\x0430\x0442\x044C \x0441\x043A\x0430\x043D\x0438\x0440\x043E\x0432\x0430\x043D\x0438\x0435 \x0432\x0441\x0435\x0445 \x0434\x0438\x0441\x043A\x043E\x0432?\n\n\x042D\x0442\x043E \x043C\x043E\x0436\x0435\x0442 \x0437\x0430\x043D\x044F\x0442\x044C \x0432\x0440\x0435\x043C\x044F.", // Начать сканирование всех дисков?
+        L"\x0410\x043D\x0442\x0438\x0432\x0438\x0440\x0443\x0441", MB_YESNO | MB_ICONQUESTION);
+    if (r != IDYES) return;
+
+    std::wstring res;
+    long rc = CallRpcScanAllDrives(res);
+    if (rc != 0) {
+        MessageBoxW(hWnd, res.empty() ? L"\x041E\x0448\x0438\x0431\x043A\x0430" : res.c_str(),
+                    L"\x0421\x043A\x0430\x043D\x0438\x0440\x043E\x0432\x0430\x043D\x0438\x0435", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    if (res == L"clean") {
+        MessageBoxW(hWnd,
+            L"\x0423\x0433\x0440\x043E\x0437 \x043D\x0435 \x043E\x0431\x043D\x0430\x0440\x0443\x0436\x0435\x043D\x043E",
+            L"\x0410\x043D\x0442\x0438\x0432\x0438\x0440\x0443\x0441", MB_OK | MB_ICONINFORMATION);
+    } else {
+        std::wstring msg = L"\x041E\x0431\x043D\x0430\x0440\x0443\x0436\x0435\x043D\x044B \x0443\x0433\x0440\x043E\x0437\x044B:\n\n";
+        msg += res;
+        MessageBoxW(hWnd, msg.c_str(), L"\x0410\x043D\x0442\x0438\x0432\x0438\x0440\x0443\x0441", MB_OK | MB_ICONERROR);
+    }
+}
+
 /* ================================================================ */
 /*  Window procedure                                                 */
 /* ================================================================ */
@@ -535,6 +726,12 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
             OnLoginClick(hWnd); return 0;
         case IDC_ACT_OK:
             OnActivateClick(hWnd); return 0;
+        case ID_AV_SCAN_FILE:
+            OnScanFile(hWnd); return 0;
+        case ID_AV_SCAN_DIR:
+            OnScanDirectory(hWnd); return 0;
+        case ID_AV_SCAN_ALL:
+            OnScanAllDrives(hWnd); return 0;
         }
         break;
 
