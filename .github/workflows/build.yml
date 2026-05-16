@@ -1,6 +1,8 @@
 name: Build
 
 on:
+  push:
+    branches: [ main, "feature/**" ]
   pull_request:
     branches: [ main ]
 
@@ -17,8 +19,38 @@ jobs:
     - name: Build
       run: cmake --build build --config Release
 
-    - name: Upload artifact
+    - name: Upload binaries
       uses: actions/upload-artifact@v4
       with:
-        name: TrayApp
-        path: build/Release/TrayApp.exe
+        name: TrayApp-binaries
+        path: |
+          build/bin/Release/TrayApp.exe
+          build/bin/Release/TrayService.exe
+
+    # ───── Installer (Inno Setup) ─────
+    - name: Install Inno Setup
+      run: choco install innosetup -y --no-progress
+
+    - name: Copy VC++ Redistributable
+      shell: pwsh
+      run: |
+        $redist = (Get-ChildItem "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Redist\MSVC\v143\vc_redist.x64.exe" -ErrorAction SilentlyContinue).FullName
+        if (-not $redist) {
+          $redist = (Get-ChildItem "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Redist\MSVC\v143\vc_redist.x64.exe" -ErrorAction SilentlyContinue).FullName
+        }
+        if (-not $redist) {
+          Invoke-WebRequest "https://aka.ms/vs/17/release/vc_redist.x64.exe" -OutFile installer\vc_redist.x64.exe
+        } else {
+          Copy-Item $redist installer\vc_redist.x64.exe
+        }
+
+    - name: Build installer
+      run: |
+        cd installer
+        & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" TrayApp.iss
+
+    - name: Upload installer
+      uses: actions/upload-artifact@v4
+      with:
+        name: TrayApp-Installer
+        path: installer/out/TrayApp-Setup-*.exe

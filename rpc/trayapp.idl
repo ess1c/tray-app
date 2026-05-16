@@ -4,5 +4,66 @@
 ]
 interface TrayAppRpc
 {
+    /* control */
     void RpcStopService(void);
+
+    /* result codes:
+       0  = OK
+       1  = not authenticated
+       2  = no license
+       3  = network / backend error
+       4  = bad credentials / activation code
+    */
+
+    /* auth */
+    long RpcLogin(
+        [in, string] const wchar_t* username,
+        [in, string] const wchar_t* password,
+        [out, string] wchar_t**     errorMessage
+    );
+
+    long RpcLogout(void);
+
+    long RpcGetCurrentUser(
+        [out] long*                 isAuthenticated,
+        [out, string] wchar_t**     username
+    );
+
+    /* license */
+    long RpcGetLicenseStatus(
+        [out] long*                 hasLicense,
+        [out, string] wchar_t**     expirationDate,
+        [out, string] wchar_t**     errorMessage
+    );
+
+    long RpcActivate(
+        [in, string] const wchar_t* code,
+        [out, string] wchar_t**     errorMessage
+    );
+
+    /* antivirus */
+    long RpcGetAntivirusInfo(
+        [out] long*                 loaded,
+        [out] long*                 recordCount,
+        [out, string] wchar_t**     releaseDate
+    );
+
+    /* Возвращает многострочный результат:
+       формат "infected|<threatName>|<offset>" или "clean" или "error|<msg>" */
+    long RpcScanFile(
+        [in, string] const wchar_t* filePath,
+        [out, string] wchar_t**     result
+    );
+
+    /* Многострочный результат, каждая строка — один заражённый файл:
+       "<path>|<threatName>|<offset>" */
+    long RpcScanDirectory(
+        [in, string] const wchar_t* dirPath,
+        [out, string] wchar_t**     results
+    );
+
+    /* Доп: сканирование всех несъёмных дисков */
+    long RpcScanAllDrives(
+        [out, string] wchar_t**     results
+    );
 }

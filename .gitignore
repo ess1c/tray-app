@@ -3,3 +3,9 @@ build/
 *.user
 CMakeSettings.json
 out/
+installer/vc_redist.x64.exe
+installer/out/
+mock_backend/cert.pem
+mock_backend/key.pem
+*.log
+*_log.txt
